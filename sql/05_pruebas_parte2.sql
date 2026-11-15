@@ -1,13 +1,14 @@
--- 05_pruebas_parte2.sql : pruebas positivas y negativas de restricciones
--- Ejecutar cada prueba por separado en pgAdmin (Query Tool).
--- Datos de partida: 5 clientes, 5 habitaciones, 5 reservas, 5 pagos.
+-- 05_pruebas_parte2.sql : pruebas positivas y negativas de restricciones (Parte 2)
+-- Ejecutar cada prueba por separado en pgAdmin: Query Tool se detiene en el
+-- primer error. Las pruebas positivas van dentro de una transaccion que se
+-- deshace al final para no alterar los datos.
 
 -- =====================================================================
--- PRUEBAS POSITIVAS (una transaccion que se revierte al final)
+-- PRUEBAS POSITIVAS (inserciones validas)
 -- =====================================================================
+BEGIN;
 
 -- P1: cliente valido
-BEGIN;
 INSERT INTO cliente (nombre, correo, telefono, nacionalidad)
 VALUES ('Laura Martinez', 'laura.martinez@example.com',
         '+573155550101', 'Colombiana');
@@ -15,7 +16,7 @@ SELECT id_cliente, nombre, correo
 FROM cliente
 WHERE correo = 'laura.martinez@example.com';
 
--- P2: reserva valida (habitacion 5, del 20 al 23 de dic: 3 x 450.000)
+-- P2: reserva valida (habitacion 5, 3 noches x 450.000 = 1.350.000)
 INSERT INTO reserva
     (id_cliente, id_habitacion, fecha_entrada, fecha_salida, total_reserva)
 SELECT id_cliente, 5, '2026-12-20', '2026-12-23', 1350000.00
@@ -27,7 +28,7 @@ FROM reserva
 WHERE id_habitacion = 5
 ORDER BY id_reserva;
 
--- P3: pago valido asociado a la reserva nueva
+-- P3: pago valido para esa reserva (fecha_pago se genera con DEFAULT now())
 INSERT INTO pago (id_reserva, monto, metodo)
 SELECT id_reserva, 1350000.00, 'Tarjeta'
 FROM reserva
@@ -37,35 +38,31 @@ FROM pago p
 JOIN reserva r USING (id_reserva)
 WHERE r.id_habitacion = 5 AND r.fecha_entrada = '2026-12-20';
 
--- Deshacer las tres pruebas positivas
 ROLLBACK;
 
 -- =====================================================================
--- PRUEBAS NEGATIVAS (cada una DEBE fallar)
+-- PRUEBAS NEGATIVAS (TODAS DEBEN FALLAR: N1 a N5)
 -- =====================================================================
 
--- N1: CHECK monto > 0
+-- N1: pago con monto = 0 -> viola CHECK chk_pago_monto (SQLSTATE 23514)
 INSERT INTO pago (id_reserva, monto, metodo)
-VALUES (1, 0, 'Efectivo');
--- Esperado: viola la restriccion check "chk_pago_monto" (SQLSTATE 23514)
+VALUES (1, 0, 'Tarjeta');
 
--- N2: FOREIGN KEY con un cliente que no existe
+-- N2: reserva con cliente inexistente -> viola FK fk_reserva_cliente (23503)
 INSERT INTO reserva
     (id_cliente, id_habitacion, fecha_entrada, fecha_salida, total_reserva)
-VALUES (999, 1, '2027-01-10', '2027-01-12', 240000.00);
--- Esperado: viola la llave foranea "fk_reserva_cliente" (SQLSTATE 23503)
+VALUES (999, 1, '2027-01-10', '2027-01-12', 300000.00);
 
--- N3: UNIQUE, correo repetido escrito con otras mayusculas
+-- N3: correo duplicado -> viola el indice unico uq_cliente_correo (23505)
 INSERT INTO cliente (nombre, correo, telefono, nacionalidad)
-VALUES ('Carlos Duplicado', 'CARLOS.GOMEZ@EXAMPLE.COM',
-        '+573100000000', 'Colombiana');
--- Esperado: viola la unicidad "uq_cliente_correo" (SQLSTATE 23505)
+SELECT 'Duplicado Prueba', correo, '+573000000000', 'Colombiana'
+FROM cliente
+ORDER BY id_cliente
+LIMIT 1;
 
--- N4: NOT NULL (se omite el telefono)
-INSERT INTO cliente (nombre, correo, nacionalidad)
-VALUES ('Sin Telefono', 'sin.telefono@example.com', 'Colombiana');
--- Esperado: valor nulo en la columna "telefono" (SQLSTATE 23502)
-
--- N5: ON DELETE RESTRICT (el cliente 1 tiene reservas)
+-- N4: borrar un cliente con reservas -> ON DELETE RESTRICT (23001)
 DELETE FROM cliente WHERE id_cliente = 1;
--- Esperado: viola la llave foranea "fk_reserva_cliente" (SQLSTATE 23503)
+
+-- N5: borrar una reserva que tiene pagos -> ON DELETE RESTRICT (23001)
+-- Responde que pasa con los pagos de una reserva que se elimina: no se puede.
+DELETE FROM reserva WHERE id_reserva = 1;
